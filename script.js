@@ -69,7 +69,8 @@ function initMesas() {
   // Si no hay mesas cargadas, inicializar con un valor por defecto (ej. 5 mesas)
   if (Object.keys(state.mesas).length === 0) {
       for(let i=1; i<=5; i++) {
-        state.mesas[i] = { id: i, name: `Mesa ${i}`, items:[], notas:'' };
+        // Añadimos printedItems para tracking de comanda
+        state.mesas[i] = { id: i, name: `Mesa ${i}`, items:[], notas:'', printedItems:[] };
       }
       state.nextMesaId = 6;
   }
@@ -102,7 +103,8 @@ function addMesa() {
         id: finalId,
         name: customName,
         items:[], 
-        notas:'' 
+        notas:'',
+        printedItems: [] // Inicializar para comanda incremental
     };
     
     state.nextMesaId++;
@@ -214,8 +216,12 @@ function seleccionarMesa(id){
     // Establecer la nueva mesa
     state.mesaActual = id; 
     
+    const mesa = state.mesas[id];
+    // Asegurar que el tracking de items impresos exista
+    if (!mesa.printedItems) mesa.printedItems = [];
+    
     // Cargar los datos de la nueva mesa
-    const notas = state.mesas[id]?.notas || '';
+    const notas = mesa?.notas || '';
     $('#orderNotas').value = notas;
 
     renderCart();
@@ -228,8 +234,6 @@ function seleccionarMesa(id){
 function getCurrentCart(){
     return state.mesaActual !== null && state.mesas[state.mesaActual] ? state.mesas[state.mesaActual].items : [];
 }
-
-// ... (El resto del código del archivo original con llamadas a saveState) ...
 
 // TABS
 function bindTabs(){
@@ -377,6 +381,7 @@ function bindVentas(){
         if(confirm('¿Vaciar carrito de Mesa '+getMesaName(state.mesaActual)+'?')){
           state.mesas[state.mesaActual].items = [];
           state.mesas[state.mesaActual].notas = ''; // Limpiar notas al vaciar
+          state.mesas[state.mesaActual].printedItems = []; // Limpiar items impresos
           saveState();
           renderCart();
           renderMesasGrid();
@@ -414,12 +419,12 @@ function bindVentas(){
     const addMesaBtn = $('#addMesaBtn');
     if(addMesaBtn) addMesaBtn.onclick = addMesa; 
     
-    // --- CORRECCIÓN DE BOTONES DE IMPRESIÓN ---
+    // --- BOTONES DE IMPRESIÓN ---
     const btnTicketConsumo = $('#btnTicketConsumo'); 
-    if(btnTicketConsumo) btnTicketConsumo.onclick = () => printCurrentOrder('consumo'); // Usar el nuevo handler
+    if(btnTicketConsumo) btnTicketConsumo.onclick = () => printCurrentOrder('consumo'); 
     const btnComanda = $('#btnComanda'); 
-    if(btnComanda) btnComanda.onclick = () => printCurrentOrder('comanda'); // Usar el nuevo handler
-    // ------------------------------------------
+    if(btnComanda) btnComanda.onclick = () => printCurrentOrder('comanda'); 
+    // ----------------------------
 
     const cobrar = $('#cobrar'); 
     if(cobrar) cobrar.onclick = cobrarVenta;
@@ -459,7 +464,7 @@ function bindPaymentBox(){
     if(payAmount) payAmount.oninput = updateChangeUI;
     
     if(montoExacto) montoExacto.onclick = function(){
-        const total = parseFloat($('#totalWithTip').textContent.replace('$', '').replace(/\./g, '').replace(',', '.')); // Manejar formato MXN
+        const total = parseFloat($('#totalWithTip').textContent.replace(/[$,]/g, '')); // Quitar $ y comas
         $('#payAmount').value = total.toFixed(2);
         updateChangeUI();
     };
@@ -543,6 +548,7 @@ function cobrarVenta(){
     // Limpiar mesa
     state.mesas[state.mesaActual].items = [];
     state.mesas[state.mesaActual].notas = '';
+    state.mesas[state.mesaActual].printedItems = []; // Limpiar items impresos después de la venta
     
     saveState();
 
@@ -560,7 +566,7 @@ function cobrarVenta(){
     alert(`¡Venta de ${toMoney(sale.totalWithTip)} registrada! Cambio: ${toMoney(sale.change)}`);
 }
 
-// --- LÓGICA DE IMPRESIÓN CORREGIDA ---
+// --- LÓGICA DE IMPRESIÓN CORREGIDA E INCREMENTAL ---
 
 /**
  * Prepara los datos del carrito actual para imprimir un ticket o comanda.
@@ -572,29 +578,68 @@ function printCurrentOrder(type){
         alert('Selecciona una mesa primero.');
         return;
     }
-    const cart = getCurrentCart();
-    if(cart.length === 0){
+    
+    const mesaId = state.mesaActual;
+    const mesa = state.mesas[mesaId];
+    if (!mesa.printedItems) mesa.printedItems = []; // Asegurar el tracking
+    
+    const currentCart = mesa.items;
+    
+    if (currentCart.length === 0) {
         alert('El carrito está vacío. Agrega productos.');
         return;
     }
 
-    const subtotal = calcCartSubtotal();
-    const tipAmount = calcTip(subtotal);
-    const totalWithTip = subtotal + tipAmount;
+    let itemsToPrint = currentCart;
+    let itemsForComandaUpdate = []; // Solo para el caso 'comanda'
+
+    if(type === 'comanda'){
+        // 1. Calcular los items nuevos/actualizados
+        itemsToPrint = [];
+        currentCart.forEach(currentItem => {
+            const printed = mesa.printedItems.find(p => norm(p.dish) === norm(currentItem.dish));
+            const printedQty = printed ? printed.qty : 0;
+            const newQty = currentItem.qty - printedQty;
+            
+            if(newQty > 0){
+                // Solo imprimir la cantidad nueva
+                itemsToPrint.push({ 
+                    dish: currentItem.dish, 
+                    unitPrice: currentItem.unitPrice, 
+                    qty: newQty 
+                });
+                // Guardar para actualizar el estado después de imprimir
+                itemsForComandaUpdate.push({ 
+                    dish: currentItem.dish, 
+                    qty: newQty 
+                });
+            }
+        });
+
+        if(itemsToPrint.length === 0) {
+            alert('No hay productos nuevos para enviar a cocina.');
+            return;
+        }
+    }
     
-    // Construir un objeto de venta temporal a partir del carrito
+    // Totales del carrito completo (se usan en 'consumo')
+    const wholeCartSubtotal = calcCartSubtotal();
+    const tipAmount = calcTip(wholeCartSubtotal);
+    const totalWithTip = wholeCartSubtotal + tipAmount;
+
+    // Construir un objeto de venta temporal
     const tempSale = {
-        id: 'PRE-'+Date.now(),
+        id: (type === 'comanda' ? 'COM' : 'PRE')+'-'+Date.now(),
         date: nowISO(),
-        mesa: state.mesaActual, 
-        mesaName: getMesaName(state.mesaActual),
+        mesa: mesaId, 
+        mesaName: getMesaName(mesaId),
         notas: $('#orderNotas')?.value || '',
-        items: cart.map(c=>({dish:c.dish, qty:Number(c.qty), unitPrice:Number(c.unitPrice)})),
-        subtotal: subtotal,
-        tipMode: $('#tipMode')?.value,
-        tipValue: parseFloat($('#tipValue')?.value || '0'),
+        // Los items a imprimir son los calculados (solo nuevos para comanda, todos para consumo)
+        items: itemsToPrint.map(c=>({dish:c.dish, qty:Number(c.qty), unitPrice:Number(c.unitPrice)})),
+        
+        // Para comanda, los totales no tienen sentido, se usan los totales del carrito completo para Consumo.
+        subtotal: wholeCartSubtotal, 
         tipAmount: +tipAmount.toFixed(2),
-        total: subtotal,
         totalWithTip: +totalWithTip.toFixed(2),
         paid: 0,
         change: 0,
@@ -603,6 +648,19 @@ function printCurrentOrder(type){
     };
 
     _print(type, tempSale);
+    
+    if(type === 'comanda' && itemsForComandaUpdate.length > 0){
+        // 2. Actualizar printedItems después de imprimir la comanda
+        itemsForComandaUpdate.forEach(newItem => {
+            const existing = mesa.printedItems.find(p => norm(p.dish) === norm(newItem.dish));
+            if (existing) {
+                existing.qty += newItem.qty;
+            } else {
+                mesa.printedItems.push({ dish: newItem.dish, qty: newItem.qty });
+            }
+        });
+        saveState();
+    }
 }
 
 
@@ -646,7 +704,7 @@ function buildTicketHTML(type, sale){
     if(!sale) return null;
     
     const showPrices = type !== 'comanda';
-    const title = type === 'comanda' ? 'COMANDA' : (type === 'consumo' ? 'TICKET DE CONSUMO' : 'TICKET DE VENTA');
+    const title = type === 'comanda' ? 'COMANDA (NUEVOS ITEMS)' : (type === 'consumo' ? 'TICKET DE CONSUMO' : 'TICKET DE VENTA');
     const mesaName = sale.mesaName || getMesaName(sale.mesa); 
 
     // Agrupar items por área para la comanda
@@ -662,13 +720,19 @@ function buildTicketHTML(type, sale){
 
         const order = ['caliente','frío','bebidas','barra','postres','otra'];
         order.forEach(a=>{
-            if(groups[a]){
+            if(groups[a] && groups[a].length > 0){ // Solo imprimir si hay items en el área
                 itemsHTML += `<div class="t-line"></div><div class="t-center t-sm t-muted">${a.toUpperCase()}</div>`;
                 groups[a].forEach(it=>{
                     itemsHTML += `<div class="t-row"><span><strong>${it.qty} ×</strong> ${it.dish}</span></div>`;
                 });
             }
         });
+        
+        if (itemsHTML === '') {
+            // Esto no debería pasar si printCurrentOrder funciona bien, pero por seguridad
+            return null; 
+        }
+
     } else {
         // Lista de items con precios
         itemsHTML = '<table class="items"><thead><tr><th class="qty">Cant</th><th class="desc">Descripción</th>';
@@ -714,7 +778,7 @@ function buildTicketHTML(type, sale){
     .footer{ text-align:center; font-size: 9pt; margin-top: 2mm }
     .block{ break-inside: avoid; page-break-inside: avoid; }
     * { line-height: 1.2; }
-    </style></head> <body> <div class="t-wrap"> <div class="block t-center"> ${logo} <h1>LA SHULA</h1> <h2>Mariscos de México</h2> </div> <div class="t-line"></div> <div class="block meta"> <div><strong>${title}</strong></div> <div>Folio: <strong>${sale.id}</strong></div> <div>Fecha: ${fmtDateTime(sale.date)}</div> ${sale.shiftId?`<div>Turno: ${sale.shiftId}</div>`:''} <div>Mesa: <strong>${mesaName}</strong></div> </div> <div class="t-line"></div> <div class="block"> ${itemsHTML} </div> ${totHTML} ${notasHTML} <div class="double"></div> <div class="footer block"> <div>Gracias por su preferencia</div> <div>La Shula — Mariscos de México</div> </div> </div> </body></html>`;
+    </style></head> <body> <div class="t-wrap"> <div class="block t-center"> ${logo} <h1>LA SHULA</h1> <h2>Mariscos de México</h2> </div> <div class="t-line"></div> <div class="block meta"> <div><strong>${title}</strong></div> <div>Folio: <strong>${sale.id}</strong></div> <div>Fecha: ${fmtDateTime(sale.date)}</div> ${sale.shiftId?`<div>Turno: ${sale.shiftId}</div>`:''} <div>Mesa: <strong>${mesaName}</strong></div> </div> <div class="t-line"></div> <div class="block"> ${itemsHTML} </div> ${type !== 'comanda' ? totHTML : ''} ${notasHTML} <div class="double"></div> <div class="footer block"> <div>Gracias por su preferencia</div> <div>La Shula — Mariscos de México</div> </div> </div> </body></html>`;
 }
 // ------------------------------------------
 
@@ -1170,20 +1234,22 @@ function repExport(rows){
 function bindReporte(){
     const repFiltrar = $('#repFiltrar');
     const repHoy = $('#repHoy');
-    const repExport = $('#repExport');
+    // CORRECCIÓN CSV: Renombrar variables locales para evitar conflicto con la función global
+    const repExportBtn = $('#repExport'); 
     const repShift = $('#repShift');
-    const repExportShift = $('#repExportShift');
+    const repExportShiftBtn = $('#repExportShift');
 
     if(repFiltrar) repFiltrar.onclick = repFilter;
     if(repHoy) repHoy.onclick = repToday;
     if(repShift) repShift.onclick = repShift;
     
-    if(repExport) repExport.onclick = () => {
+    // Llamar a la función global repExport
+    if(repExportBtn) repExportBtn.onclick = () => {
         const from = $('#repFrom')?.value;
         const to = $('#repTo')?.value;
         repExport(filterVentasByDate(from, to));
     };
-    if(repExportShift) repExportShift.onclick = () => {
+    if(repExportShiftBtn) repExportShiftBtn.onclick = () => {
         const shiftId = $('#shiftSelect')?.value;
         if(!shiftId) { alert('Selecciona un turno primero.'); return; }
         repExport(state.ventas.filter(v => v.shiftId === shiftId));
@@ -1199,7 +1265,7 @@ function saveLogo(){
     const url = ($('#logoUrl')?.value||'').trim();
     state.logoUrl = url;
     saveState();
-    alert(url ? 'Logo guardado.' : 'Logo borrado.');
+    alert(url ? 'Logo guardado.' : 'Logo eliminado.');
 }
 
 function clearLogo(){
