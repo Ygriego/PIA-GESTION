@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>La Shula POS</title>
+  <link rel="stylesheet" href="style.css"> 
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">
+      <div class="logo">🦐</div>
+      <div class="titles">
+        <h1>La Shula</h1>
+        <p>POS — Mariscos de México</p>
+      </div>
+    </div>
+    <nav class="tabs" role="tablist">
+      <button class="tab active" type="button" data-tab="ventas">Ventas</button>
+      <button class="tab" type="button" data-tab="inventario">Inventario</button>
+      <button class="tab" type="button" data-tab="recetarios">Recetarios</button>
+      <button class="tab" type="button" data-tab="mermas">Mermas</button>
+      <button class="tab" type="button" data-tab="reporte">Reporte</button>
+    </nav>
+    <div class="shift-area">
+      <span id="shiftStatus" class="pill">Turno: cerrado</span>
+      <button id="openShift" type="button" class="btn">Abrir turno</button>
+      <button id="closeShift" type="button" class="btn ghost">Cerrar turno</button>
+    </div>
+  </header>
+
+  <main>
+    <section id="ventas" class="view active">
+      <div class="grid two">
+        <aside class="panel">
+          <div class="panel-header">
+            <h2>Menú</h2>
+            <input id="searchMenu" type="text" class="input" placeholder="Buscar platillo…" />
+          </div>
+          <div id="menuList" class="cards">
+            <p class="empty">Aún no hay platillos. Ve a <b>Recetarios</b>.</p>
+          </div>
+        </aside>
+
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Mesa: <span id="mesaActual">Ninguna</span></h2>
+            <button id="vaciarCarrito" type="button" class="btn ghost">Vaciar</button>
+          </div>
+
+          <div class="panel" style="margin:12px; border-radius:8px">
+            <div class="panel-header" style="padding:8px 12px; justify-content: space-between;">
+              <h3 style="font-size:14px">Seleccionar Mesa</h3>
+              <button id="addMesaBtn" type="button" class="btn primary" style="font-size:12px; padding:6px 10px;">+ Agregar Mesa</button>
+            </div>
+            <div id="mesasGrid" class="mesas-grid"></div>
+          </div>
+
+          <div id="cartItems" class="cart-items"></div>
+
+          <div class="cart-footer">
+            <div class="totals">
+              <div><span>Subtotal</span><strong id="subtotal">$0.00</strong></div>
+              <div><span>Propina</span><strong id="tipAmount">$0.00</strong></div>
+              <div class="line"></div>
+              <div class="grand"><span>Total</span><strong id="totalWithTip">$0.00</strong></div>
+            </div>
+
+            <div class="checkout-actions">
+              <input id="orderNotas" type="text" class="input" placeholder="Notas para cocina (opcional)" />
+
+              <div class="grid three">
+                <label class="qty-wrap" style="flex-direction:column; align-items:stretch">
+                  <span>Tipo de propina</span>
+                  <select id="tipMode" class="input" style="width:100%">
+                    <option value="none">Sin propina</option>
+                    <option value="percent">% (porcentaje)</option>
+                    <option value="fixed">$ MXN</option>
+                  </select>
+                </label>
+                <label class="qty-wrap" style="flex-direction:column; align-items:stretch">
+                  <span>Valor</span>
+                  <input id="tipValue" class="input" type="number" min="0" step="0.01" placeholder="Ej. 15 ó 50" />
+                </label>
+                <label class="qty-wrap" style="flex-direction:column; align-items:stretch">
+                  <span>Propina calculada</span>
+                  <output id="tipAmountOut">$0.00</output>
+                </label>
+              </div>
+
+              <div class="toolbar">
+                <button id="btnTicketConsumo" type="button" class="btn primary">Ticket de Consumo</button>
+                <button id="btnComanda" type="button" class="btn">Comanda de Cocina</button>
+              </div>
+
+              <div class="payment-box">
+                <div class="grid three">
+                  <label class="qty-wrap" style="flex-direction:column; align-items:stretch">
+                    <span>Tipo de pedido</span>
+                    <select id="orderType" class="input">
+                      <option value="Para comer aquí">Para comer aquí</option>
+                      <option value="Para llevar">Para llevar</option>
+                    </select>
+                  </label>
+                  <label class="qty-wrap" style="flex-direction:column; align-items:stretch">
+                    <span>¿Con cuánto paga?</span>
+                    <input id="payAmount" class="input" type="number" min="0" step="0.01" placeholder="0.00" />
+                  </label>
+                  <label class="qty-wrap" style="flex-direction:column; align-items:stretch">
+                    <span>Cambio</span>
+                    <output id="changeDue">$0.00</output>
+                  </label>
+                </div>
+
+                <div class="toolbar" style="margin-top:10px">
+                  <button id="btnMontoExacto" type="button" class="btn ghost">Monto Exacto</button>
+                  <button id="cobrar" type="button" class="btn success">Cobrar y Ticket de Venta</button>
+                </div>
+              </div>
+
+              <p class="hint">💡 <b>Ticket de Consumo</b>: solo productos y total. <b>Ticket de Venta</b>: incluye pago y cambio.</p>
+            </div>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <section id="inventario" class="view">
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Inventario</h2>
+        </div>
+
+        <div id="invAlert" class="banner warning" style="display:none">⚠️ Hay artículos con existencia bajo el mínimo.</div>
+
+        <div class="actions">
+          <div class="grid four">
+            <input id="newInvName" type="text" class="input" placeholder="Ingrediente (ej. Cebolla)" />
+            <input id="newInvUnit" type="text" class="input" placeholder="Unidad (g/ml/u)" />
+            <input id="newInvStock" class="input" type="number" min="0" placeholder="Existencia" />
+            <input id="newInvMin" class="input" type="number" min="0" placeholder="Mínimo" />
+          </div>
+          <div class="toolbar">
+            <button id="addInvBtn" type="button" class="btn primary">Agregar ingrediente</button>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table id="tablaInventario">
+            <thead>
+              <tr>
+                <th>Ingrediente</th>
+                <th>Unidad</th>
+                <th>Existencia</th>
+                <th>Mínimo</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+          <p id="invEmpty" class="empty">Inventario vacío. Agrega ingredientes arriba.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="recetarios" class="view">
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Recetarios (platillos)</h2>
+        </div>
+
+        <div class="actions">
+          <div class="grid four">
+            <input id="newDishName" type="text" class="input" placeholder="Nombre del platillo" />
+            <input id="newDishPrice" class="input" type="number" min="0" step="0.01" placeholder="Precio" />
+            <select id="newDishArea" class="input">
+              <option value="caliente">Área: caliente</option>
+              <option value="frío">Área: frío</option>
+              <option value="bebidas">Área: bebidas</option>
+              <option value="barra">Área: barra</option>
+              <option value="postres">Área: postres</option>
+              <option value="otra">Área: otra</option>
+            </select>
+            <button id="addDishBtn" type="button" class="btn primary">Agregar platillo</button>
+          </div>
+          <p class="hint">Luego añade ingredientes y gramajes por platillo.</p>
+        </div>
+
+        <datalist id="invNames"></datalist>
+
+        <div class="table-wrap">
+          <table id="tablaRecetas">
+            <thead>
+              <tr>
+                <th>Platillo</th>
+                <th>Precio</th>
+                <th>Área</th>
+                <th>Ingredientes</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+          <p id="recEmpty" class="empty">No hay platillos. Crea uno arriba.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="mermas" class="view">
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Reporte de mermas</h2>
+        </div>
+
+        <div class="actions">
+          <div class="grid four">
+            <select id="mermaIngrediente" class="input"></select>
+            <input id="mermaCantidad" type="number" min="0" class="input" placeholder="Cantidad" />
+            <input id="mermaUnidad" type="text" class="input" placeholder="Unidad (g/ml/u)" />
+            <input id="mermaMotivo" type="text" class="input" placeholder="Motivo" />
+          </div>
+          <div class="toolbar">
+            <button id="agregarMerma" type="button" class="btn primary">Agregar merma</button>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table id="tablaMermas">
+            <thead>
+              <tr><th>Fecha</th><th>Ingrediente</th><th>Cantidad</th><th>Unidad</th><th>Motivo</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="reporte" class="view">
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Reporte de ventas</h2>
+        </div>
+
+        <div class="actions">
+          <div class="grid three">
+            <input id="repFrom" class="input" type="date" />
+            <input id="repTo" class="input" type="date" />
+            <div class="toolbar">
+              <button id="repFiltrar" type="button" class="btn">Filtrar</button>
+              <button id="repHoy" type="button" class="btn ghost">Hoy</button>
+              <button id="repExport" type="button" class="btn">Exportar CSV</button>
+            </div>
+          </div>
+
+          <div class="grid three">
+            <select id="shiftSelect" class="input"></select>
+            <button id="repShift" type="button" class="btn">Filtrar por turno</button>
+            <button id="repExportShift" type="button" class="btn">Exportar CSV (turno)</button>
+          </div>
+
+          <div class="grid three">
+            <input id="logoUrl" type="text" class="input" placeholder="URL del logo (opcional)" />
+            <button id="saveLogo" type="button" class="btn">Guardar logo</button>
+            <button id="clearLogo" type="button" class="btn ghost">Quitar logo</button>
+          </div>
+        </div>
+
+        <div class="stats">
+          <div class="stat"><span>Tickets</span><strong id="repTickets">0</strong></div>
+          <div class="stat"><span>Artículos vendidos</span><strong id="repItems">0</strong></div>
+          <div class="stat"><span>Total vendido</span><strong id="repTotal">$0.00</strong></div>
+        </div>
+
+        <div class="table-wrap">
+          <table id="tablaVentas">
+            <thead>
+              <tr><th>Fecha</th><th>Mesa</th><th>Detalle</th><th>Total</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+          <p id="repEmpty" class="empty">Sin ventas.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    <small>© La Shula — Mariscos de México</small>
+  </footer>
+
+  <script src="script.js"></script> 
+</body>
+</html>
