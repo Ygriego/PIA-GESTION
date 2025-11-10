@@ -112,8 +112,17 @@
                   </label>
                 </div>
 
+                <div class="field">
+                    <label>Método de Pago</label>
+                    <div style="display: flex; gap: 15px; margin-top: 5px;">
+                        <label><input type="radio" name="paymentMethod" value="Efectivo" checked> Efectivo</label>
+                        <label><input type="radio" name="paymentMethod" value="Tarjeta"> Tarjeta</label>
+                        <label><input type="radio" name="paymentMethod" value="Otro"> Otro</label>
+                    </div>
+                </div>
+
                 <div class="toolbar" style="margin-top:10px">
-                  <button id="btnMontoExacto" type="button" class="btn ghost"></button>
+                  <button id="btnMontoExacto" type="button" class="btn ghost">Monto Exacto</button>
                   <button id="cobrar" type="button" class="btn success">Cobrar y Ticket de Venta</button>
                 </div>
               </div>

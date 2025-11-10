@@ -480,6 +480,45 @@ function getTipConfig(){
     };
 }
 
+/**
+ * Verifica si hay suficiente inventario para los items en el carrito.
+ * @returns {object|null} Un objeto con {ing: {required:x, stock:y}} si hay faltantes, o null si todo está bien.
+ */
+function checkInventory(){
+    const cart = getCurrentCart();
+    const requiredStock = {};
+    const missing = {};
+    
+    // 1. Calcular el stock total requerido para la venta
+    for(const item of cart){
+        const receta = state.recetas.find(r=>norm(r.dish)===norm(item.dish));
+        if(!receta) continue;
+        
+        for(const ing of receta.ingredients){
+            if(!ing.ingredient) continue;
+            const inv = getInv(ing.ingredient);
+            if(!inv) continue;
+            
+            const req = Number(ing.qty||0) * Number(item.qty||0);
+            
+            if(!requiredStock[inv.ingredient]){
+                requiredStock[inv.ingredient] = { required: 0, stock: Number(inv.stock||0), unit: inv.unit };
+            }
+            requiredStock[inv.ingredient].required += req;
+        }
+    }
+    
+    // 2. Comparar el stock requerido con el stock actual
+    for(const ingName in requiredStock){
+        const { required, stock, unit } = requiredStock[ingName];
+        if(required > stock){
+            missing[ingName] = { required, stock, unit };
+        }
+    }
+    
+    return Object.keys(missing).length > 0 ? missing : null;
+}
+
 function cobrarVenta(){
     if(!state.mesaActual){
         alert('Selecciona una mesa para cobrar.');
@@ -501,7 +540,20 @@ function cobrarVenta(){
         alert('El monto pagado es menor al total');
         return;
     }
-
+    
+    // VALIDACIÓN DE STOCK
+    const missingStock = checkInventory();
+    if(missingStock){
+        let alertMsg = '⚠️ Venta bloqueada por INVENTARIO INSUFICIENTE ⚠️\n\nFaltan los siguientes ingredientes para completar el pedido:\n';
+        for(const ingName in missingStock){
+            const { required, stock, unit } = missingStock[ingName];
+            const needed = required - stock;
+            alertMsg += `\n- ${ingName}: Faltan ${needed.toFixed(2)} ${unit} (se requieren ${required.toFixed(2)}, hay ${stock.toFixed(2)})`;
+        }
+        alert(alertMsg);
+        return; // Detener la venta
+    }
+    
     // Descontar inventario
     const lowAfter = new Set();
     for(const item of cart){
@@ -522,6 +574,9 @@ function cobrarVenta(){
     const tipCfg = getTipConfig();
     const orderType = $('#orderType')?.value || '';
     const notas = $('#orderNotas')?.value || '';
+    // --- NUEVO: Capturar método de pago ---
+    const paymentMethod = document.querySelector('input[name="paymentMethod"]:checked')?.value || 'Efectivo'; 
+    // -------------------------------------
     
     const sale = {
         id: 'S'+Date.now(),
@@ -539,6 +594,7 @@ function cobrarVenta(){
         paid,
         change: +(paid - totalWithTip).toFixed(2),
         orderType,
+        paymentMethod: paymentMethod, // NUEVO: Añadir método de pago
         shiftId: state.currentShiftId
     };
 
@@ -563,7 +619,7 @@ function cobrarVenta(){
     $('#changeDue').textContent = toMoney(0);
     $('#orderNotas').value = '';
 
-    alert(`¡Venta de ${toMoney(sale.totalWithTip)} registrada! Cambio: ${toMoney(sale.change)}`);
+    alert(`¡Venta de ${toMoney(sale.totalWithTip)} registrada! Cambio: ${toMoney(sale.change)} (${sale.paymentMethod})`);
 }
 
 // --- LÓGICA DE IMPRESIÓN CORREGIDA E INCREMENTAL ---
@@ -644,6 +700,7 @@ function printCurrentOrder(type){
         paid: 0,
         change: 0,
         orderType: $('#orderType')?.value || 'Para comer aquí',
+        paymentMethod: document.querySelector('input[name="paymentMethod"]:checked')?.value || 'Efectivo', // Incluir para fines de impresión de consumo si fuera necesario
         shiftId: state.currentShiftId
     };
 
@@ -704,7 +761,7 @@ function buildTicketHTML(type, sale){
     if(!sale) return null;
     
     const showPrices = type !== 'comanda';
-    const title = type === 'comanda' ? 'COMANDA (NUEVOS ITEMS)' : (type === 'consumo' ? 'TICKET DE CONSUMO' : 'TICKET DE VENTA');
+    const title = type === 'comanda' ? 'COMANDA' : (type === 'consumo' ? 'TICKET DE CONSUMO' : 'TICKET DE VENTA');
     const mesaName = sale.mesaName || getMesaName(sale.mesa); 
 
     // Agrupar items por área para la comanda
@@ -756,6 +813,8 @@ function buildTicketHTML(type, sale){
     if(showPrices){
         totHTML = `<div class="t-line"></div> <p class="total">SUBTOTAL: ${toMoney(subtotal)}</p> <p class="total">PROPINA: ${toMoney(tipAmt)}</p> <p class="total"><strong>TOTAL: ${toMoney(totalWithTip)}</strong></p>`;
         if(type === 'venta' && sale.paid > 0){
+            // Añadir el método de pago al ticket de venta
+            totHTML += `<div class="t-line"></div><p class="total">Método de Pago: <strong>${sale.paymentMethod || 'Efectivo'}</strong></p>`; 
             totHTML += `<p class="total">Paga con: ${toMoney(sale.paid)}</p> <p class="total">Cambio: ${toMoney(sale.change)}</p> <p class="total">Pedido: ${sale.orderType||''}</p>`;
         }
     }
@@ -790,10 +849,11 @@ function getInv(name){
 function renderInventario(lowSet = new Set()){
     const body = $('#tablaInventario tbody');
     const empty = $('#invEmpty');
-    const alert = $('#invAlert');
+    const alertEl = $('#invAlert');
     body.innerHTML = '';
     
     let lowStock = false;
+    let lowStockNames = []; // Para la alerta inicial
     
     state.inventario.forEach((i, idx) => {
         const tr = document.createElement('tr');
@@ -803,6 +863,7 @@ function renderInventario(lowSet = new Set()){
         if(stock <= min){
             tr.classList.add('low');
             lowStock = true;
+            if(!lowSet.size) lowStockNames.push(i.ingredient); // Solo para la alerta inicial
         } else if (lowSet.has(i.ingredient)){
             tr.classList.add('low');
         }
@@ -823,7 +884,9 @@ function renderInventario(lowSet = new Set()){
     });
 
     empty.style.display = state.inventario.length === 0 ? 'block' : 'none';
-    alert.style.display = lowStock ? 'block' : 'none';
+    alertEl.style.display = lowStock ? 'block' : 'none';
+    
+    return lowStockNames; // Retornar nombres para la alerta inicial
 }
 
 function addNewInventory(){
@@ -1205,14 +1268,20 @@ function bindTurnos(){
     if(closeBtn) closeBtn.onclick = closeShift;
 }
 
+// Actualización de repExport para incluir el método de pago y traducir encabezados
 function repExport(rows){
-    const csvRows = [['id','date','mesa','notas','items','subtotal','tipMode','tipValue','tipAmount','totalWithTip','paid','change','orderType','shiftId']];
+    // *********************************************************************************
+    // ENCABEZADOS TRADUCIDOS A ESPAÑOL
+    // *********************************************************************************
+    const csvRows = [['Folio','Fecha','Mesa','Notas','Detalle de Items','Subtotal','Modo Propina','Valor Propina','Monto Propina','Total con Propina','Monto Pagado','Cambio','Tipo Pedido','Metodo Pago','ID Turno']];
+    // *********************************************************************************
+    
     rows.forEach(v=>{
         const detail = v.items.map(i=>`${i.qty}x ${i.dish} @ ${i.unitPrice}`).join(' | ');
         const mesaName = v.mesaName || getMesaName(v.mesa) || '';
         csvRows.push([ 
             v.id, v.date, mesaName, v.notas||'', detail, v.subtotal??v.total, v.tipMode||'', v.tipValue||0, v.tipAmount||0, 
-            v.totalWithTip??v.total, v.paid||0, v.change||0, v.orderType||'', v.shiftId||'' 
+            v.totalWithTip??v.total, v.paid||0, v.change||0, v.orderType||'', v.paymentMethod||'Efectivo', v.shiftId||'' 
         ]);
     });
     const csv = csvRows.map(r=>r.map(c=>{
@@ -1234,14 +1303,13 @@ function repExport(rows){
 function bindReporte(){
     const repFiltrar = $('#repFiltrar');
     const repHoy = $('#repHoy');
-    // CORRECCIÓN CSV: Renombrar variables locales para evitar conflicto con la función global
     const repExportBtn = $('#repExport'); 
-    const repShift = $('#repShift');
+    const repShiftBtn = $('#repShift');
     const repExportShiftBtn = $('#repExportShift');
 
     if(repFiltrar) repFiltrar.onclick = repFilter;
     if(repHoy) repHoy.onclick = repToday;
-    if(repShift) repShift.onclick = repShift;
+    if(repShiftBtn) repShiftBtn.onclick = repShift;
     
     // Llamar a la función global repExport
     if(repExportBtn) repExportBtn.onclick = () => {
@@ -1332,7 +1400,13 @@ function initApp(){
     renderMenu();
     renderMesasGrid();
     renderCart();
-    renderInventario();
+    
+    const lowStockNames = renderInventario();
+    if(lowStockNames.length > 0) {
+        // Alerta solo si es la primera carga y hay stock bajo
+        alert('🚨 ALERTA DE INVENTARIO BAJO 🚨\n\nLos siguientes ingredientes están en o por debajo de su nivel mínimo:\n- ' + lowStockNames.join('\n- '));
+    }
+    
     renderRecetas();
     renderMermas();
     renderReporte();
